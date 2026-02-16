@@ -510,42 +510,45 @@ def calc_consensus_usd(cross_rates):
 def dirham_dollar_signal(market_usd, aed_derived_usd, consensus_usd, n_currencies):
     """Generate professional buy/sell signal based on Dirham cross-rate analysis.
 
+    AED is pegged to USD at a FIXED rate — even small deviations are meaningful.
+    The AED spread in Iran is typically 0.1–0.3%, so thresholds are tight.
+
     Signal tiers:
-        > +3%  : Strong Sell (dollar overpriced vs AED parity)
-        +1.5~3%: Caution (dollar slightly overpriced)
-        ±1.5%  : Neutral (fair range)
-        -1.5~3%: Buy (dollar underpriced)
-        < -3%  : Strong Buy (dollar significantly underpriced)
+        > +2.5%  : Strong Sell (dollar overpriced vs AED parity)
+        +1.0~2.5%: Caution (dollar slightly overpriced)
+        ±1.0%    : Neutral (within transaction-cost noise)
+        -1.0~2.5%: Buy (dollar underpriced — real opportunity)
+        < -2.5%  : Strong Buy (dollar significantly underpriced)
     """
     if aed_derived_usd <= 0:
         return "i", "داده کافی نیست", "ارزش دلار از درهم قابل محاسبه نیست", [], 0
     aed_diff = ((market_usd - aed_derived_usd) / aed_derived_usd * 100)
     cons_diff = ((market_usd - consensus_usd) / consensus_usd * 100) if consensus_usd > 0 else aed_diff
     consensus_note = f"اجماع {n_currencies} ارز: اختلاف {cons_diff:+.1f}%"
-    if aed_diff > 3:
+    if aed_diff > 2.5:
         return ("s",
             f"فروش — دلار آزاد {aed_diff:.1f}% گران‌تر از ارزش درهمی",
-            f"بازار ({fmt(market_usd)}) بیش از ۳% بالاتر از محاسباتی ({fmt(aed_derived_usd)})",
+            f"بازار ({fmt(market_usd)}) بیش از ۲.۵% بالاتر از محاسباتی ({fmt(aed_derived_usd)})",
             ["فروش بخشی از دلار — قیمت بالاتر از ارزش درهمی",
              "خرید درهم مقرون‌به‌صرفه‌تر از دلار",
-             "صبر تا اختلاف زیر ۱.۵% شد سپس دوباره بخرید",
+             "صبر تا اختلاف به محدوده عادی برگردد",
              consensus_note], aed_diff)
-    if aed_diff > 1.5:
+    if aed_diff > 1.0:
         return ("w",
             f"احتیاط — دلار {aed_diff:.1f}% بالاتر از ارزش درهمی",
-            f"بازار ({fmt(market_usd)}) کمی بالاتر از محاسباتی ({fmt(aed_derived_usd)})",
-            ["خرید دلار توصیه نمی‌شود — کمی گران",
+            f"بازار ({fmt(market_usd)}) بالاتر از محاسباتی ({fmt(aed_derived_usd)})",
+            ["خرید دلار توصیه نمی‌شود — گران‌تر از درهم",
              "اگر دلار دارید نگه دارید",
              "خرید درهم با تبدیل مستقیم مقرون‌به‌صرفه‌تر",
              consensus_note], aed_diff)
-    if aed_diff > -1.5:
+    if aed_diff > -1.0:
         return ("w",
             f"خنثی — قیمت نزدیک ارزش درهمی ({aed_diff:+.1f}%)",
             f"بازار ({fmt(market_usd)}) ≈ محاسباتی ({fmt(aed_derived_usd)}) — متعادل",
-            ["بازار متعادل — سیگنال خاصی نیست",
+            ["بازار متعادل — اختلاف در حد هزینه تراکنش",
              "خرید/فروش بر اساس نیاز شخصی",
              consensus_note], aed_diff)
-    if aed_diff > -3:
+    if aed_diff > -2.5:
         return ("b",
             f"خرید — دلار {abs(aed_diff):.1f}% ارزان‌تر از ارزش درهمی",
             f"بازار ({fmt(market_usd)}) زیر محاسباتی ({fmt(aed_derived_usd)}) — فرصت خرید",
@@ -1009,7 +1012,7 @@ with tab_da:
         _da_abs_icon = "🔴 گران" if _da_abs_diff > 0 else ("🟢 ارزان" if _da_abs_diff < 0 else "🟡 برابر")
         render_m("⚖️ اختلاف مطلق", f"{fmt(_da_abs_diff)} T", _da_abs_icon)
     with damc[5]:
-        _da_pct_icon = "🟢 ارزان" if _aed_diff_pct < -1.5 else ("🔴 گران" if _aed_diff_pct > 1.5 else "🟡 متعادل")
+        _da_pct_icon = "🟢 ارزان" if _aed_diff_pct < -1.0 else ("🔴 گران" if _aed_diff_pct > 1.0 else "🟡 متعادل")
         render_m("📊 اختلاف درصدی", f"{_aed_diff_pct:+.2f}%", _da_pct_icon)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1028,27 +1031,27 @@ with tab_da:
         محدوده‌ها بر اساس ارزش محاسباتی دلار از درهم. وقتی قیمت بازار وارد هر محدوده شود، سیگنال مربوطه صادر می‌شود.
     </div>""", unsafe_allow_html=True)
 
-    _az_strong_sell = int(_usd_from_aed_sell * 1.03)
-    _az_sell = int(_usd_from_aed_sell * 1.015)
-    _az_fair_h = int(_usd_from_aed_sell * 1.015)
-    _az_fair_l = int(_usd_from_aed_sell * 0.985)
-    _az_buy = int(_usd_from_aed_sell * 0.985)
-    _az_strong_buy = int(_usd_from_aed_sell * 0.97)
+    _az_strong_sell = int(_usd_from_aed_sell * 1.025)
+    _az_sell = int(_usd_from_aed_sell * 1.01)
+    _az_fair_h = int(_usd_from_aed_sell * 1.01)
+    _az_fair_l = int(_usd_from_aed_sell * 0.99)
+    _az_buy = int(_usd_from_aed_sell * 0.99)
+    _az_strong_buy = int(_usd_from_aed_sell * 0.975)
 
     def _az_mark(lo, hi):
         return " ← 👈 قیمت فعلی" if lo <= dollar <= hi else ""
 
     st.markdown(f"""<table class="dtbl">
     <tr><th>محدوده</th><th>سیگنال</th><th>بازه قیمت (تومان)</th><th>وضعیت</th></tr>
-    <tr class="rs"><td>فروش قوی (بالای +۳%)</td><td>🔴🔴</td>
+    <tr class="rs"><td>فروش قوی (بالای +۲.۵%)</td><td>🔴🔴</td>
         <td>بالای {fmt(_az_strong_sell)}</td><td>{_az_mark(_az_strong_sell, 999_999_999)}</td></tr>
-    <tr class="rs"><td>احتیاط (+۱.۵% تا +۳%)</td><td>🔴</td>
+    <tr class="rs"><td>احتیاط (+۱% تا +۲.۵%)</td><td>🔴</td>
         <td>{fmt(_az_sell)} — {fmt(_az_strong_sell)}</td><td>{_az_mark(_az_sell, _az_strong_sell)}</td></tr>
-    <tr class="rw"><td>متعادل (±۱.۵%)</td><td>🟡</td>
+    <tr class="rw"><td>متعادل (±۱%)</td><td>🟡</td>
         <td>{fmt(_az_fair_l)} — {fmt(_az_fair_h)}</td><td>{_az_mark(_az_fair_l, _az_fair_h)}</td></tr>
-    <tr class="rb"><td>خرید (−۱.۵% تا −۳%)</td><td>🟢</td>
+    <tr class="rb"><td>خرید (−۱% تا −۲.۵%)</td><td>🟢</td>
         <td>{fmt(_az_strong_buy)} — {fmt(_az_buy)}</td><td>{_az_mark(_az_strong_buy, _az_buy)}</td></tr>
-    <tr class="rb"><td>خرید قوی (زیر −۳%)</td><td>🟢🟢</td>
+    <tr class="rb"><td>خرید قوی (زیر −۲.۵%)</td><td>🟢🟢</td>
         <td>زیر {fmt(_az_strong_buy)}</td><td>{_az_mark(0, _az_strong_buy)}</td></tr>
     </table>""", unsafe_allow_html=True)
 
@@ -1088,24 +1091,36 @@ with tab_da:
         with cmc[1]:
             render_m("💵 دلار بازار آزاد", f"{fmt(dollar)} T", "bonbast.com")
         with cmc[2]:
-            _cons_icon = "🟢 ارزان" if _cons_diff_pct < -1.5 else ("🔴 گران" if _cons_diff_pct > 1.5 else "🟡 عادی")
+            _cons_icon = "🟢 ارزان" if _cons_diff_pct < -0.5 else ("🔴 گران" if _cons_diff_pct > 0.5 else "🟡 عادی")
             render_m("📊 اختلاف اجماع", f"{_cons_diff_pct:+.2f}%", _cons_icon)
 
-        # Signal agreement
-        _agree_buy = sum(1 for cr in _cross_rates.values() if cr["diff_pct"] < -1)
-        _agree_sell = sum(1 for cr in _cross_rates.values() if cr["diff_pct"] > 1)
+        # Signal agreement — directional analysis
+        _agree_buy = sum(1 for cr in _cross_rates.values() if cr["diff_pct"] < -0.3)
+        _agree_sell = sum(1 for cr in _cross_rates.values() if cr["diff_pct"] > 0.3)
         _agree_neutral = len(_cross_rates) - _agree_buy - _agree_sell
-        if _agree_buy > _agree_sell and _agree_buy > _agree_neutral:
-            _agree_text = '✅ <strong>اجماع قوی خرید</strong> — اکثریت ارزها دلار آزاد را ارزان نشان می‌دهند'
-        elif _agree_sell > _agree_buy and _agree_sell > _agree_neutral:
-            _agree_text = '⚠️ <strong>اجماع قوی فروش</strong> — اکثریت ارزها دلار آزاد را گران نشان می‌دهند'
+        # Directional: how many show dollar below fair value (any amount)
+        _dir_below = sum(1 for cr in _cross_rates.values() if cr["diff_pct"] < 0)
+        _dir_above = sum(1 for cr in _cross_rates.values() if cr["diff_pct"] > 0)
+        if _dir_below == len(_cross_rates):
+            _agree_text = '✅ <strong>اجماع کامل خرید</strong> — تمام ارزها دلار آزاد را زیر ارزش نشان می‌دهند'
+        elif _agree_buy > _agree_sell and _agree_buy >= len(_cross_rates) // 2:
+            _agree_text = '✅ <strong>اجماع خرید</strong> — اکثریت ارزها دلار آزاد را ارزان نشان می‌دهند'
+        elif _dir_above == len(_cross_rates):
+            _agree_text = '⚠️ <strong>اجماع کامل فروش</strong> — تمام ارزها دلار آزاد را بالای ارزش نشان می‌دهند'
+        elif _agree_sell > _agree_buy and _agree_sell >= len(_cross_rates) // 2:
+            _agree_text = '⚠️ <strong>اجماع فروش</strong> — اکثریت ارزها دلار آزاد را گران نشان می‌دهند'
+        elif _dir_below > _dir_above:
+            _agree_text = f'📊 <strong>تمایل به خرید</strong> — {_dir_below} از {len(_cross_rates)} ارز دلار را زیر ارزش نشان می‌دهند'
+        elif _dir_above > _dir_below:
+            _agree_text = f'📊 <strong>تمایل به فروش</strong> — {_dir_above} از {len(_cross_rates)} ارز دلار را بالای ارزش نشان می‌دهند'
         else:
             _agree_text = '📊 <strong>نظرات متفاوت</strong> — ارزها توافق ندارند — احتیاط بیشتر'
         st.markdown(f"""<div class="hint">
             <strong>توافق ارزها:</strong>
-            🟢 خرید: {_agree_buy} ارز |
+            🟢 ارزان: {_agree_buy} ارز |
             🟡 خنثی: {_agree_neutral} ارز |
-            🔴 فروش: {_agree_sell} ارز<br>
+            🔴 گران: {_agree_sell} ارز |
+            جهت: {_dir_below}↓ / {_dir_above}↑<br>
             {_agree_text}
         </div>""", unsafe_allow_html=True)
     else:
@@ -1171,40 +1186,98 @@ with tab_da:
         render_m("💵 قیمت بازار آزاد", f"{fmt(dollar)} T", "bonbast.com")
 
     # Combined multi-method recommendation
-    _m_buy = sum([
-        _aed_diff_pct < -1.5,
-        _inf_diff < -5,
-        _cons_diff_pct < -1.5 if _consensus_usd > 0 else False
+    # ═══ Tier 1: Strong individual signals (strict thresholds) ═══
+    _m_buy_strong = sum([
+        _aed_diff_pct < -1.0,
+        _inf_diff < -3,
+        _cons_diff_pct < -1.0 if _consensus_usd > 0 else False
     ])
-    _m_sell = sum([
-        _aed_diff_pct > 1.5,
-        _inf_diff > 5,
-        _cons_diff_pct > 1.5 if _consensus_usd > 0 else False
+    _m_sell_strong = sum([
+        _aed_diff_pct > 1.0,
+        _inf_diff > 3,
+        _cons_diff_pct > 1.0 if _consensus_usd > 0 else False
     ])
     _m_total = 3 if _consensus_usd > 0 else 2
 
-    if _m_buy >= 2:
-        render_sig("b", "تأیید چند روشه — خرید دلار",
-                   f"{_m_buy} از {_m_total} روش تحلیلی سیگنال خرید می‌دهند",
-                   ["خرید پله‌ای دلار — اعتبار بالا",
-                    f"درهم: {'دلار ارزان ✅' if _aed_diff_pct < -1.5 else 'خنثی/گران ❌'}",
-                    f"تورم: {'دلار ارزان ✅' if _inf_diff < -5 else 'خنثی/گران ❌'}",
-                    f"اجماع: {'دلار ارزان ✅' if (_cons_diff_pct < -1.5 and _consensus_usd > 0) else 'خنثی/گران ❌'}"],
+    # ═══ Tier 2: Directional consensus (ALL methods agree on direction) ═══
+    _all_below = all([
+        _aed_diff_pct < -0.2,
+        _inf_diff < 0,
+        (_cons_diff_pct < -0.2 if _consensus_usd > 0 else True)
+    ])
+    _all_above = all([
+        _aed_diff_pct > 0.2,
+        _inf_diff > 0,
+        (_cons_diff_pct > 0.2 if _consensus_usd > 0 else True)
+    ])
+    _avg_dev = (_aed_diff_pct + _inf_diff + (_cons_diff_pct if _consensus_usd > 0 else 0)) / _m_total
+
+    # ═══ Status labels for each method ═══
+    _aed_lbl = f"درهم: {_aed_diff_pct:+.1f}% {'✅' if _aed_diff_pct < -0.3 else ('⚠️' if _aed_diff_pct > 0.3 else '➖')}"
+    _inf_lbl = f"تورم: {_inf_diff:+.1f}% {'✅' if _inf_diff < -0.3 else ('⚠️' if _inf_diff > 0.3 else '➖')}"
+    _cons_lbl = f"اجماع: {_cons_diff_pct:+.1f}% {'✅' if _cons_diff_pct < -0.3 else ('⚠️' if _cons_diff_pct > 0.3 else '➖')}"
+
+    if _m_buy_strong >= 2:
+        render_sig("b", "خرید قوی — تأیید چند روشه",
+                   f"{_m_buy_strong} از {_m_total} روش سیگنال خرید قوی می‌دهند (میانگین: {_avg_dev:+.1f}%)",
+                   ["خرید پله‌ای دلار — اعتبار بسیار بالا",
+                    _aed_lbl, _inf_lbl, _cons_lbl],
                    "🔀 ترکیبی")
-    elif _m_sell >= 2:
-        render_sig("s", "تأیید چند روشه — فروش دلار",
-                   f"{_m_sell} از {_m_total} روش تحلیلی سیگنال فروش می‌دهند",
-                   ["فروش بخشی از دلار — اعتبار بالا",
-                    f"درهم: {'دلار گران ✅' if _aed_diff_pct > 1.5 else 'خنثی/ارزان ❌'}",
-                    f"تورم: {'دلار گران ✅' if _inf_diff > 5 else 'خنثی/ارزان ❌'}",
-                    f"اجماع: {'دلار گران ✅' if (_cons_diff_pct > 1.5 and _consensus_usd > 0) else 'خنثی/ارزان ❌'}"],
+    elif _m_sell_strong >= 2:
+        render_sig("s", "فروش قوی — تأیید چند روشه",
+                   f"{_m_sell_strong} از {_m_total} روش سیگنال فروش قوی می‌دهند (میانگین: {_avg_dev:+.1f}%)",
+                   ["فروش بخشی از دلار — اعتبار بسیار بالا",
+                    _aed_lbl, _inf_lbl, _cons_lbl],
+                   "🔀 ترکیبی")
+    elif _all_below and _avg_dev < -0.5:
+        render_sig("b",
+                   f"خرید — همه روش‌ها دلار را زیر ارزش نشان می‌دهند",
+                   f"هر سه روش تحلیلی جهت خرید دارند (میانگین اختلاف: {_avg_dev:+.1f}%)",
+                   ["اجماع جهتی: تمام روش‌ها قیمت بازار را زیر ارزش واقعی می‌دانند",
+                    "خرید پله‌ای توصیه می‌شود",
+                    _aed_lbl, _inf_lbl, _cons_lbl],
+                   "🔀 ترکیبی")
+    elif _all_above and _avg_dev > 0.5:
+        render_sig("s",
+                   f"فروش — همه روش‌ها دلار را بالای ارزش نشان می‌دهند",
+                   f"هر سه روش تحلیلی جهت فروش دارند (میانگین اختلاف: {_avg_dev:+.1f}%)",
+                   ["اجماع جهتی: تمام روش‌ها قیمت بازار را بالای ارزش واقعی می‌دانند",
+                    "فروش بخشی از دلار توصیه می‌شود",
+                    _aed_lbl, _inf_lbl, _cons_lbl],
+                   "🔀 ترکیبی")
+    elif _all_below:
+        render_sig("b",
+                   f"تمایل به خرید — جهت روش‌ها هم‌سو",
+                   f"هر سه روش دلار را زیر ارزش نشان می‌دهند (میانگین: {_avg_dev:+.1f}%) ولی فاصله کم",
+                   ["جهت مثبت ولی اختلاف جزئی — خرید با احتیاط",
+                    _aed_lbl, _inf_lbl, _cons_lbl],
+                   "🔀 ترکیبی")
+    elif _all_above:
+        render_sig("w",
+                   f"تمایل به فروش — جهت روش‌ها هم‌سو",
+                   f"هر سه روش دلار را بالای ارزش نشان می‌دهند (میانگین: {_avg_dev:+.1f}%) ولی فاصله کم",
+                   ["جهت منفی — از خرید خودداری کنید",
+                    _aed_lbl, _inf_lbl, _cons_lbl],
+                   "🔀 ترکیبی")
+    elif _m_buy_strong >= 1 and _avg_dev < -0.3:
+        render_sig("b",
+                   f"تمایل به خرید — حداقل یک روش سیگنال قوی دارد",
+                   f"میانگین اختلاف {_avg_dev:+.1f}% — دلار کمی زیر ارزش",
+                   [_aed_lbl, _inf_lbl, _cons_lbl,
+                    "خرید با احتیاط — پله‌ای"],
+                   "🔀 ترکیبی")
+    elif _m_sell_strong >= 1 and _avg_dev > 0.3:
+        render_sig("w",
+                   f"تمایل به فروش — حداقل یک روش سیگنال قوی دارد",
+                   f"میانگین اختلاف {_avg_dev:+.1f}% — دلار کمی بالای ارزش",
+                   [_aed_lbl, _inf_lbl, _cons_lbl,
+                    "از خرید خودداری کنید"],
                    "🔀 ترکیبی")
     else:
-        render_sig("w", "نتیجه مختلط — صبر",
-                   "روش‌های مختلف تحلیلی نتیجه یکسان نمی‌دهند",
-                   ["رصد روزانه تا اجماع ایجاد شود",
-                    f"درهم: {_aed_diff_pct:+.1f}% | تورم: {_inf_diff:+.1f}% | اجماع: {_cons_diff_pct:+.1f}%",
-                    "هر روش مزایا و محدودیت‌های خود را دارد"],
+        render_sig("w", "خنثی — بازار متعادل",
+                   f"میانگین اختلاف {_avg_dev:+.1f}% — سیگنال مشخصی وجود ندارد",
+                   [_aed_lbl, _inf_lbl, _cons_lbl,
+                    "رصد روزانه تا فرصت مشخص شود"],
                    "🔀 ترکیبی")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1246,11 +1319,11 @@ with tab_da:
         </div>""", unsafe_allow_html=True)
 
         st.markdown("""<table class="dtbl"><tr><th>اختلاف</th><th>سیگنال</th><th>اقدام</th></tr>
-<tr class="rb"><td>زیر −۳%</td><td>🟢🟢</td><td>خرید قوی دلار</td></tr>
-<tr class="rb"><td>−۳% تا −۱.۵%</td><td>🟢</td><td>خرید دلار</td></tr>
-<tr class="rw"><td>−۱.۵% تا +۱.۵%</td><td>🟡</td><td>متعادل — صبر</td></tr>
-<tr class="rs"><td>+۱.۵% تا +۳%</td><td>🔴</td><td>احتیاط — نخرید</td></tr>
-<tr class="rs"><td>بالای +۳%</td><td>🔴🔴</td><td>فروش دلار</td></tr></table>""", unsafe_allow_html=True)
+<tr class="rb"><td>زیر −۲.۵%</td><td>🟢🟢</td><td>خرید قوی دلار</td></tr>
+<tr class="rb"><td>−۲.۵% تا −۱%</td><td>🟢</td><td>خرید دلار</td></tr>
+<tr class="rw"><td>−۱% تا +۱%</td><td>🟡</td><td>متعادل (حد هزینه تراکنش)</td></tr>
+<tr class="rs"><td>+۱% تا +۲.۵%</td><td>🔴</td><td>احتیاط — نخرید</td></tr>
+<tr class="rs"><td>بالای +۲.۵%</td><td>🔴🔴</td><td>فروش دلار</td></tr></table>""", unsafe_allow_html=True)
 
     st.markdown("""<div class="disc">
     ⚠️ <strong>توجه:</strong> این تحلیل بر اساس نرخ لحظه‌ای بازار آزاد و پگ ثابت درهم-دلار است.
