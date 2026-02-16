@@ -281,22 +281,6 @@ def trend_analysis(hist, sym):
     if not f or not l: return None
     return {"chg": ((l - f) / f) * 100, "dir": "down" if l < f else "up"}
 
-# ================================================================
-# DOLLAR VALUE ANALYSIS — Constants & Functions
-# ================================================================
-BASE_DOLLAR_VALUE_1399 = 22018.36   # Verified base real value (Jalali 1399)
-BASE_YEAR = 1399
-
-# CBI annual inflation rates (point-to-point, Jalali year-end)
-# Source: بانک مرکزی ایران — verified by user
-# These are KNOWN completed-year rates. Users can override in sidebar.
-_DEFAULT_INFLATION = {
-    1400: 0.4021,  # 40.21%
-    1401: 0.4650,  # 46.50%
-    1402: 0.5230,  # 52.30%
-    1403: 0.3405,  # 34.05%
-}
-
 # Jalali month names for UI
 _MONTH_NAMES = {
     1: "فروردین", 2: "اردیبهشت", 3: "خرداد", 4: "تیر",
@@ -306,22 +290,6 @@ _MONTH_NAMES = {
 
 # Dirham-Dollar Analysis Constants
 AED_USD_PEG = 3.6725   # Official UAE Central Bank peg: 1 USD = 3.6725 AED (fixed since 1997)
-
-def _get_fallback_rate(year, known_rates):
-    """Smart fallback rate for years not in defaults.
-
-    Uses the average of the last 3 known annual rates as an estimate
-    for newly completed years that don't have a hardcoded default.
-    This ensures automatic year transitions work smoothly.
-    """
-    if year in known_rates:
-        return known_rates[year]
-    # Average of last 3 known rates as estimate
-    sorted_years = sorted(y for y in known_rates if known_rates[y] > 0)
-    if sorted_years:
-        recent = [known_rates[y] for y in sorted_years[-3:]]
-        return round(sum(recent) / len(recent), 4)
-    return 0.35  # Ultimate fallback
 
 def get_jalali_year_month():
     """Get current Jalali (Solar Hijri) year and approximate month."""
@@ -341,113 +309,6 @@ def get_jalali_year_month():
     else:
         j_m = (days - 186) // 30 + 7
     return j_y, max(1, min(12, j_m))
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_worldbank_inflation():
-    """Fetch Iran inflation from World Bank API as supplementary reference."""
-    try:
-        r = requests.get(
-            "https://api.worldbank.org/v2/country/IR/indicator/FP.CPI.TOTL.ZG"
-            "?format=json&per_page=50&date=2019:2026", timeout=15)
-        data = r.json()
-        if len(data) > 1 and data[1]:
-            result = {}
-            for item in data[1]:
-                if item.get("value") is not None:
-                    g_year = int(item["date"])
-                    j_year = g_year - 621   # Approximate Gregorian→Jalali mapping
-                    result[j_year] = round(item["value"] / 100, 4)
-            return result
-    except Exception:
-        pass
-    return {}
-
-def calc_dollar_value(target_year, rates):
-    """Compound dollar real value from base year 1399."""
-    v = BASE_DOLLAR_VALUE_1399
-    for y in range(BASE_YEAR + 1, target_year + 1):
-        v *= (1 + rates.get(y, 0))
-    return v
-
-def calc_dollar_value_partial(target_year, current_month, rates, data_month=None):
-    """Dollar value with partial-year interpolation.
-
-    The point-to-point rate for a specific month is used as the annual rate
-    estimate. We scale proportionally: value = prev_year × (1 + rate × month/12).
-
-    Args:
-        target_year: Current Jalali year
-        current_month: Current Jalali month (1-12)
-        rates: Dict of {year: rate} for all years
-        data_month: Month for which the rate was announced (informational,
-                    used for display but not calculation since p2p rate is
-                    already an annualized year-over-year rate).
-    """
-    v = calc_dollar_value(target_year - 1, rates)
-    r = rates.get(target_year, 0)
-    # Scale annual p2p rate proportionally to current month
-    v *= (1 + r * (current_month / 12.0))
-    return v
-
-def dollar_sig(market, value_now, value_prev):
-    """6-tier dollar buy/sell signal based on price vs real value."""
-    if value_now <= 0:
-        return "i", "داده کافی نیست", "ارزش دلار محاسبه نشده", [], 0
-    diff = ((market - value_now) / value_now) * 100
-    safe = ((value_now - market) / value_now) * 100
-    if market <= value_prev:
-        return ("b",
-            "خرید قوی — حاشیه امن حداکثری",
-            f"قیمت ({fmt(market)}) ≤ ارزش سال قبل ({fmt(value_prev)}) — ریسک افت بسیار کم",
-            ["بهترین محدوده خرید دلار — حداکثر حاشیه امن",
-             "احتمال پایین‌تر رفتن قیمت بسیار کم است",
-             "خرید پله‌ای توصیه می‌شود (۳ مرحله)",
-             "روند کلی دلار صعودی — صبر تا قیمت به ارزش واقعی برسد"],
-            diff)
-    if market < value_now * 0.90:
-        return ("b",
-            "خرید — زیر ارزش واقعی با فاصله مناسب",
-            f"قیمت {safe:.1f}% زیر ارزش واقعی — حاشیه امن خوب",
-            ["محدوده خرید مناسب — فاصله کافی از ارزش واقعی",
-             "خرید پله‌ای: ۳ مرحله با فاصله ۱ هفته",
-             "روند صعودی — قیمت به سمت ارزش حرکت خواهد کرد",
-             "ریسک پایین — حاشیه امن حفظ شده"],
-            diff)
-    if market < value_now:
-        return ("w",
-            "خرید با احتیاط — نزدیک ارزش واقعی",
-            f"قیمت فقط {safe:.1f}% زیر ارزش — حاشیه امن کم",
-            ["نزدیک ارزش واقعی — خرید چندان ارزشمند نیست",
-             "اگر خرید ضروری دارید فقط بخش کمی بخرید",
-             "صبر تا قیمت فاصله بیشتری از ارزش بگیرد",
-             "⚠️ روی حباب خرید نکنید"],
-            diff)
-    if market < value_now * 1.05:
-        return ("w",
-            "صبر — قیمت نزدیک ارزش واقعی",
-            f"اختلاف {abs(diff):.1f}% — نه خرید نه فروش",
-            ["قیمت در محدوده ارزش واقعی است",
-             "نه وقت خرید نه وقت فروش",
-             "دلار فعلی نگه دارید — رصد روزانه",
-             "صبر تا فرصت بهتر"],
-            diff)
-    if market < value_now * 1.15:
-        return ("w",
-            "حباب — قیمت بالاتر از ارزش واقعی",
-            f"قیمت {diff:.1f}% بالای ارزش — به هیچ عنوان نخرید!",
-            ["⚠️ الان وقت خرید دلار نیست!",
-             "قیمت بالاتر از ارزش واقعی — حباب",
-             "اگر دلار دارید فعلاً نگه دارید",
-             "صبر — قیمت به ارزش واقعی بر خواهد گشت"],
-            diff)
-    return ("s",
-        "فروش — محدوده خروج (بالای ۱۵% ارزش)",
-        f"قیمت {diff:.1f}% بالای ارزش واقعی — محدوده فروش",
-        [f"محدوده فروش دلار — قیمت {diff:.1f}% بالای ارزش",
-         "بخشی از دلار بفروشید و نقد (تومان) نگه دارید",
-         "صبر تا قیمت اصلاح شد دوباره بخرید",
-         "قیمت همیشه به ارزش واقعی بر می‌گردد"],
-        diff)
 
 # ================================================================
 # DIRHAM-DOLLAR CROSS-RATE ANALYSIS
@@ -594,72 +455,6 @@ with st.sidebar:
 
     st.markdown("---")
     _j_year, _j_month = get_jalali_year_month()
-    _wb_inf = fetch_worldbank_inflation()
-    # Merge: WB as base, then CBI defaults override, then session overrides
-    _base_inf = {**_wb_inf, **_DEFAULT_INFLATION}
-    st.markdown('<div class="rtl"><small>📊 نرخ تورم — تحلیل ارزش دلار</small></div>',
-                unsafe_allow_html=True)
-    _user_inf = {}
-
-    # ── Completed years: annual rates ──
-    # This range auto-expands: when _j_year becomes 1405, year 1404 appears here
-    _completed_start = BASE_YEAR + 1
-    _completed_end = _j_year - 1  # Last completed year
-    _has_new_years = any(yr not in _DEFAULT_INFLATION for yr in range(_completed_start, _completed_end + 1))
-
-    with st.expander(
-        f"تورم سال‌های گذشته ({_completed_start}–{_completed_end})",
-        expanded=_has_new_years  # Auto-expand if there are years needing input
-    ):
-        for yr in range(_completed_start, _completed_end + 1):
-            _in_defaults = yr in _DEFAULT_INFLATION
-            _in_wb = yr in _wb_inf
-            # Smart default: hardcoded > World Bank > average of recent years
-            default = _get_fallback_rate(yr, _base_inf)
-            # Source label for help text
-            if _in_defaults:
-                _src = "✅ بانک مرکزی (تایید‌شده)"
-            elif _in_wb:
-                _src = "🌐 World Bank (نیاز به تایید)"
-            else:
-                _src = "⚠️ تخمینی — لطفاً نرخ دقیق وارد کنید"
-            val = st.number_input(
-                f"{'⚠️ ' if not _in_defaults else ''}تورم سالانه {yr} (%)",
-                value=round(default * 100, 2),
-                min_value=0.0, max_value=200.0, step=0.01, key=f"inf_{yr}",
-                help=f"نرخ تورم نقطه‌به‌نقطه سالانه {yr} — {_src}")
-            _user_inf[yr] = val / 100.0
-            # Warning for newly transitioned years
-            if not _in_defaults and not _in_wb:
-                st.caption(f"⚠️ سال {yr} جدید است — نرخ تخمینی. لطفاً از بانک مرکزی تصحیح کنید.")
-
-        if _wb_inf:
-            st.caption(f"✅ World Bank: {len(_wb_inf)} سال (مرجع)")
-        else:
-            st.caption("⚠️ World Bank دریافت نشد — پیش‌فرض CBI")
-
-    # ── Current year: monthly precision ──
-    st.markdown(f'<div class="rtl"><small>📌 سال جاری ({_j_year}):</small></div>',
-                unsafe_allow_html=True)
-    _inf_data_month = st.selectbox(
-        f"آخرین ماه اعلام‌شده تورم {_j_year}",
-        options=list(range(1, 13)),
-        index=max(0, min(_j_month - 2, 11)),
-        format_func=lambda m: _MONTH_NAMES[m],
-        key="inf_data_month",
-        help="ماهی که آخرین نرخ تورم نقطه‌به‌نقطه توسط بانک مرکزی اعلام شده")
-    # Default p2p for current year: known data > WB > average of recent years
-    _inf_p2p_default = _get_fallback_rate(_j_year, _base_inf)
-    _inf_p2p = st.number_input(
-        f"تورم نقطه‌به‌نقطه {_MONTH_NAMES[_inf_data_month]} {_j_year} (%)",
-        value=round(_inf_p2p_default * 100, 1),
-        min_value=0.0, max_value=200.0, step=0.1, key="inf_p2p",
-        help="نرخ تورم نقطه‌به‌نقطه (سالانه) آخرین ماه اعلام‌شده بانک مرکزی")
-    _user_inf[_j_year] = _inf_p2p / 100.0
-
-    if not _user_inf:
-        _user_inf = dict(_DEFAULT_INFLATION)
-    st.markdown("---")
     st.caption(f"📅 {datetime.now().strftime('%Y/%m/%d %H:%M')} | ☀️ {_j_year}/{_j_month:02d} ({_MONTH_NAMES[_j_month]})")
 
 # Pre-calculate
@@ -684,11 +479,6 @@ for _s, _ip in IRAN_CUR.items():
         _fv = (1.0 / _r) * dollar
         CUR_PREMS[_s] = ((_ip - _fv) / _fv * 100) if _fv > 0 else 0
 
-# Dollar real value pre-calculation (uses sidebar inflation inputs)
-_dv_current = calc_dollar_value_partial(_j_year, _j_month, _user_inf, data_month=_inf_data_month)
-_dv_full = calc_dollar_value(_j_year, _user_inf)
-_dv_prev = calc_dollar_value(_j_year - 1, _user_inf)
-
 # Dirham-Dollar cross-rate pre-calculations
 _usd_from_aed_sell = calc_usd_from_aed(_aed_sell)
 _usd_from_aed_buy = calc_usd_from_aed(_aed_buy)
@@ -702,14 +492,14 @@ _cons_diff_pct = ((dollar - _consensus_usd) / _consensus_usd * 100) if _consensu
 # ================================================================
 st.markdown("""<div class="rtl"><h1 style="color:#e6f1ff;margin-bottom:0">🪙 مشاور مالی شخصی</h1>
 <p style="color:#8892b0;font-size:14px;margin-top:2px">
-    v4.0 | داده‌های زنده bonbast.com + goldprice.org + ECB + تحلیل ارزش دلار</p></div>""", unsafe_allow_html=True)
+    v4.0 | داده‌های زنده bonbast.com + goldprice.org + ECB + تحلیل دلار (درهم)</p></div>""", unsafe_allow_html=True)
 
 # ================================================================
 # TABS
 # ================================================================
-tab1, tab2, tab3, tab_d, tab_da, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab_d, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 داشبورد", "🪙 حباب سکه", "🥇 آب شده", "💵 تحلیل دلار",
-    "📡 سیگنال درهم-دلار", "🔢 ماشین‌حساب", "💱 تبدیل ارز", "💼 سبد سرمایه", "📉 خرید پله‌ای", "🗺️ نقشه راه"])
+    "🔢 ماشین‌حساب", "💱 تبدیل ارز", "💼 سبد سرمایه", "📉 خرید پله‌ای", "🗺️ نقشه راه"])
 
 # ── TAB 1: DASHBOARD ─────────────────
 with tab1:
@@ -717,9 +507,8 @@ with tab1:
     mc = st.columns(6)
     with mc[0]: render_m("💵 دلار آزاد", f"{fmt(dollar)} T",
                          "🟢 bonbast زنده" if bb["ok"] else "⚠️ دستی")
-    _dv_dash_diff = ((dollar - _dv_current) / _dv_current * 100) if _dv_current > 0 else 0
-    with mc[1]: render_m("📈 ارزش واقعی دلار", f"{fmt(_dv_current)} T",
-                         f"{'🟢 زیر ارزش' if _dv_dash_diff < 0 else '🔴 بالای ارزش'} ({_dv_dash_diff:+.1f}%)")
+    with mc[1]: render_m("📡 دلار از درهم", f"{fmt(_usd_from_aed_sell)} T",
+                         f"{'🟢 ارزان' if _aed_diff_pct < -1 else ('🔴 گران' if _aed_diff_pct > 1 else '🟡 متعادل')} ({_aed_diff_pct:+.1f}%)")
     with mc[2]: render_m("🥇 انس طلا", f"${fmt(ounce,2)}", f"{_ounce_chg:+.2f}$")
     with mc[3]: render_m("🪙 سکه امامی", f"{fmt(emami)} T")
     with mc[4]: render_m("⚖️ مظنه", f"{fmt(moz)} T")
@@ -740,7 +529,7 @@ with tab1:
         ⚠️ سیگنال‌های زیر هر بازار را <strong>جداگانه</strong> تحلیل می‌کنند →
         برای تصمیم نهایی به توصیه ترکیبی بالا مراجعه کنید.</div>""", unsafe_allow_html=True)
 
-    s1, s2, s3, s4 = st.columns(4)
+    s1, s2, s3 = st.columns(3)
     with s1:
         cs_, cd_ = coin_sig(bpct_e)
         acts = {"b":["خرید پله‌ای سکه","۳ مرحله بخرید نه یکجا"],
@@ -754,30 +543,21 @@ with tab1:
                 "w":["فعلاً نخرید","صبر تا اختلاف کم شود"]}
         render_sig(gs_, {"b":"خرید آب شده","s":"فروش آب شده","w":"صبر"}[gs_], gd_, acts[gs_], "🥇 آب شده")
     with s3:
-        _dst, _dtit, _ddsc, _, _d_diff = dollar_sig(dollar, _dv_current, _dv_prev)
-        _dacts = {"b":["خرید دلار — محدوده مناسب","جزئیات: تب تحلیل دلار"],
-                  "s":["فروش بخشی از دلار","جزئیات: تب تحلیل دلار"],
-                  "w":["فعلاً صبر — رصد روزانه","جزئیات: تب تحلیل دلار"],
-                  "i":["داده کافی نیست"]}
-        render_sig(_dst, {"b":"خرید دلار","s":"فروش دلار","w":"صبر","i":"نامشخص"}[_dst],
-                   _ddsc, _dacts.get(_dst, []), "💵 دلار (تورم)")
-    with s4:
         _da_sig_t, _da_sig_tit, _da_sig_dsc, _, _da_sig_d = dirham_dollar_signal(
             dollar, _usd_from_aed_sell, _consensus_usd, len(_cross_rates))
-        _da_sig_acts = {"b":["خرید دلار — ارزان‌تر از درهم","جزئیات: تب سیگنال درهم-دلار"],
-                        "s":["فروش دلار — گران‌تر از درهم","جزئیات: تب سیگنال درهم-دلار"],
-                        "w":["بازار متعادل — صبر","جزئیات: تب سیگنال درهم-دلار"],
+        _da_sig_acts = {"b":["خرید دلار — ارزان‌تر از درهم","جزئیات: تب تحلیل دلار"],
+                        "s":["فروش دلار — گران‌تر از درهم","جزئیات: تب تحلیل دلار"],
+                        "w":["بازار متعادل — صبر","جزئیات: تب تحلیل دلار"],
                         "i":["داده کافی نیست"]}
-        render_sig(_da_sig_t, {"b":"خرید (درهم)","s":"فروش (درهم)","w":"صبر","i":"نامشخص"}[_da_sig_t],
-                   _da_sig_dsc, _da_sig_acts.get(_da_sig_t, []), "📡 درهم")
+        render_sig(_da_sig_t, {"b":"خرید دلار","s":"فروش دلار","w":"صبر","i":"نامشخص"}[_da_sig_t],
+                   _da_sig_dsc, _da_sig_acts.get(_da_sig_t, []), "💵 دلار")
 
-    kc = st.columns(6)
+    kc = st.columns(5)
     kc[0].metric("ارزش ذاتی سکه", f"{fmt(intr_e)} T")
     kc[1].metric("حباب امامی", f"{bpct_e:.1f}%")
     kc[2].metric("عدد A (تئوری مظنه)", f"{fmt(fa)} T", f"اختلاف: {gdiff_pct:.1f}%")
     kc[3].metric("۱۸ عیار تئوری", f"{fmt(calc_gold_18k(ounce, dollar))} T")
-    kc[4].metric("ارزش واقعی دلار", f"{fmt(_dv_current)} T", f"{_dv_dash_diff:+.1f}%")
-    kc[5].metric("دلار از درهم", f"{fmt(_usd_from_aed_sell)} T", f"{_aed_diff_pct:+.1f}%")
+    kc[4].metric("دلار از درهم", f"{fmt(_usd_from_aed_sell)} T", f"{_aed_diff_pct:+.1f}%")
 
 # ── TAB 2: COIN BUBBLE ───────────────
 with tab2:
@@ -853,141 +633,9 @@ with tab3:
 <tr class="rw"><td>۳٪ تا ۵٪</td><td>🟡</td><td>گران — صبر کنید</td></tr>
 <tr class="rs"><td>بالای ۵٪</td><td>🔴</td><td>بسیار گران — بفروشید</td></tr></table>""", unsafe_allow_html=True)
 
-# ── TAB D: DOLLAR ANALYSIS ──────────
+# ── TAB D: DOLLAR ANALYSIS (DIRHAM METHOD) ──────
 with tab_d:
-    st.markdown('<div class="rtl"><h2>💵 تحلیل ارزش واقعی دلار</h2></div>', unsafe_allow_html=True)
-    st.markdown(f"""<div class="hint">
-        <strong>مفهوم کلیدی:</strong> قیمت همیشه در اطراف ارزش واقعی نوسان می‌کند.
-        اگر ارزش واقعی دلار را بدانید، محدوده ورود (خرید) و خروج (فروش) مشخص می‌شود.<br>
-        <strong>روش محاسبه:</strong> ارزش واقعی بر اساس تفاضل نرخ تورم ایران و آمریکا
-        (تورم آمریکا ناچیز → فقط تورم ایران) از مبنای سال ۱۳۹۹ محاسبه شده.<br>
-        <strong>📌 مبنای تورم {_j_year}:</strong> نقطه‌به‌نقطه {_MONTH_NAMES[_inf_data_month]} = {_inf_p2p:.1f}%
-    </div>""", unsafe_allow_html=True)
-
-    # ── Metrics Row ──
-    _dv_diff_pct = ((dollar - _dv_current) / _dv_current * 100) if _dv_current > 0 else 0
-    dmc = st.columns(5)
-    with dmc[0]:
-        render_m("💵 قیمت بازار", f"{fmt(dollar)} T", "bonbast.com")
-    with dmc[1]:
-        render_m("📈 ارزش واقعی (الان)", f"{fmt(_dv_current)} T",
-                 f"{_MONTH_NAMES[_j_month]} {_j_year} | تورم: {_MONTH_NAMES[_inf_data_month]}")
-    with dmc[2]:
-        render_m("📊 ارزش پایان سال جاری", f"{fmt(_dv_full)} T", f"پایان {_j_year}")
-    with dmc[3]:
-        render_m("📉 ارزش پایان سال قبل", f"{fmt(_dv_prev)} T",
-                 f"پایان {_j_year - 1} (مرجع حاشیه امن)")
-    with dmc[4]:
-        _dv_sub = "🟢 زیر ارزش" if _dv_diff_pct < -5 else (
-            "🟡 نزدیک ارزش" if abs(_dv_diff_pct) <= 5 else "🔴 بالای ارزش")
-        render_m("⚖️ اختلاف قیمت/ارزش", f"{_dv_diff_pct:+.1f}%", _dv_sub)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Main Signal ──
-    st.markdown('<div class="rtl"><h3>🎯 سیگنال خرید / فروش دلار</h3></div>', unsafe_allow_html=True)
-    _ds_t, _ds_title, _ds_desc, _ds_acts, _ds_diff = dollar_sig(dollar, _dv_current, _dv_prev)
-    render_sig(_ds_t, _ds_title, _ds_desc, _ds_acts, "💵 تحلیل ارزش دلار")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Zone Visualization ──
-    st.markdown('<div class="rtl"><h3>🗺️ محدوده‌های خرید و فروش</h3></div>', unsafe_allow_html=True)
-    st.markdown("""<div class="hint" style="font-size:12px">
-        خرید و فروش در یک <strong>محدوده</strong> انجام می‌شود، نه در یک نقطه مشخص.
-        هرگز قرار نیست در کمترین قیمت بخرید یا در بالاترین بفروشید.</div>""",
-        unsafe_allow_html=True)
-
-    _z_sell = int(_dv_current * 1.15)
-    _z_caution_h = int(_dv_current * 1.15)
-    _z_caution_l = int(_dv_current * 1.05)
-    _z_fair_h = int(_dv_current * 1.05)
-    _z_fair_l = int(_dv_current * 0.95)
-    _z_buy_h = int(_dv_current * 0.95)
-    _z_buy_l = int(_dv_prev)
-    _z_strong = int(_dv_prev)
-
-    def _zmark(lo, hi):
-        return " ← 👈 قیمت فعلی" if lo <= dollar <= hi else ""
-
-    st.markdown(f"""<table class="dtbl">
-    <tr><th>محدوده</th><th>سیگنال</th><th>بازه قیمت (تومان)</th><th>وضعیت</th></tr>
-    <tr class="rs"><td>فروش (بالای ۱۱۵% ارزش)</td><td>🔴</td>
-        <td>بالای {fmt(_z_sell)}</td><td>{_zmark(_z_sell, 999_999_999)}</td></tr>
-    <tr class="rw"><td>حباب (۱۰۵–۱۱۵% ارزش)</td><td>🟠</td>
-        <td>{fmt(_z_caution_l)} — {fmt(_z_caution_h)}</td><td>{_zmark(_z_caution_l, _z_caution_h)}</td></tr>
-    <tr class="rw"><td>ارزش واقعی (۹۵–۱۰۵%)</td><td>🟡</td>
-        <td>{fmt(_z_fair_l)} — {fmt(_z_fair_h)}</td><td>{_zmark(_z_fair_l, _z_fair_h)}</td></tr>
-    <tr class="rb"><td>خرید (سال قبل تا ۹۵% ارزش)</td><td>🟢</td>
-        <td>{fmt(_z_buy_l)} — {fmt(_z_buy_h)}</td><td>{_zmark(_z_buy_l, _z_buy_h)}</td></tr>
-    <tr class="rb"><td>خرید قوی (زیر ارزش سال قبل)</td><td>🟢🟢</td>
-        <td>زیر {fmt(_z_strong)}</td><td>{_zmark(0, _z_strong)}</td></tr>
-    </table>""", unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Historical Value Table ──
-    with st.expander("📜 جدول ارزش واقعی دلار (تاریخی)", expanded=False):
-        _hist_rows = [{"سال": str(BASE_YEAR), "نرخ تورم": "— (مبنا)",
-                       "ارزش واقعی دلار (تومان)": fmt(BASE_DOLLAR_VALUE_1399)}]
-        for _yr in range(BASE_YEAR + 1, _j_year + 1):
-            _val = calc_dollar_value(_yr, _user_inf)
-            _rate = _user_inf.get(_yr, 0)
-            _hist_rows.append({
-                "سال": str(_yr),
-                "نرخ تورم": f"{_rate*100:.1f}%",
-                "ارزش واقعی دلار (تومان)": fmt(_val),
-            })
-        _hist_rows.append({
-            "سال": f"{_j_year} ({_MONTH_NAMES[_j_month]})",
-            "نرخ تورم": f"{_user_inf.get(_j_year, 0)*100:.1f}% (نقطه‌به‌نقطه {_MONTH_NAMES[_inf_data_month]})",
-            "ارزش واقعی دلار (تومان)": fmt(_dv_current),
-        })
-        st.dataframe(pd.DataFrame(_hist_rows), use_container_width=True, hide_index=True)
-
-    # ── Educational Section ──
-    st.markdown("""<div class="hint">
-        <strong>نکات کلیدی تحلیلگر:</strong><br>
-        • <strong>روند کلی دلار صعودی</strong> است — دلیلی وجود ندارد از ارزش واقعی پایین‌تر بماند<br>
-        • خرید و فروش در یک <strong>محدوده</strong> انجام شود نه در یک نقطه مشخص<br>
-        • هرچه قیمت خرید به <strong>ارزش سال قبل</strong> نزدیک‌تر باشد، حاشیه امن بیشتر و ریسک کمتر<br>
-        • <strong>هیچ‌کس</strong> نمی‌تواند زمان دقیق رسیدن قیمت به هدف را تعیین کند — فقط تحلیل و صبر<br>
-        • اگر تفاوت قیمت و ارزش زیاد باشد، قیمت <strong>تمایل به برگشت</strong> به ارزش دارد<br>
-        • <strong>روی حباب خرید نکنید</strong> — وقتی قیمت بالای ارزش واقعی است صبر کنید
-    </div>""", unsafe_allow_html=True)
-
-    with st.expander("📐 فرمول محاسبه ارزش واقعی دلار"):
-        st.markdown(f"""<div class="formula">
-ارزش پایه (۱۳۹۹) = {fmt(BASE_DOLLAR_VALUE_1399, 2)} تومان<br><br>
-<strong>سال‌های کامل:</strong><br>
-ارزش سال N = ارزش سال (N-1) × (1 + نرخ تورم سالانه N)<br><br>
-<strong>سال جاری (ماهانه):</strong><br>
-ارزش فعلی = ارزش پایان سال قبل × (1 + تورم_نقطه‌به‌نقطه ÷ 12 × ماه_جاری)<br>
-تورم نقطه‌به‌نقطه = آخرین نرخ اعلامی بانک مرکزی ({_MONTH_NAMES[_inf_data_month]} {_j_year})<br><br>
-محدوده خرید: قیمت بازار زیر ارزش واقعی<br>
-بهترین خرید: قیمت نزدیک ارزش سال قبل (حاشیه امن حداکثری)<br>
-محدوده فروش: قیمت بازار بالای ۱۱۵% ارزش واقعی</div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""<div class="hint" style="font-size:12px">
-        <strong>مثال محاسبه:</strong><br>
-        ارزش ۱۳۹۹ = {fmt(BASE_DOLLAR_VALUE_1399, 2)} T<br>
-        تورم ۱۴۰۰ = {_user_inf.get(1400, 0)*100:.2f}%
-        → ارزش ۱۴۰۰ = {fmt(calc_dollar_value(1400, _user_inf))} T<br>
-        تورم ۱۴۰۱ = {_user_inf.get(1401, 0)*100:.2f}%
-        → ارزش ۱۴۰۱ = {fmt(calc_dollar_value(1401, _user_inf))} T<br>
-        ...<br>
-        تورم نقطه‌به‌نقطه {_MONTH_NAMES[_inf_data_month]} {_j_year} = {_inf_p2p:.1f}%<br>
-        ارزش فعلی ({_MONTH_NAMES[_j_month]} {_j_year}) = {fmt(_dv_current)} T
-        </div>""", unsafe_allow_html=True)
-
-    st.markdown("""<div class="disc">
-    ⚠️ <strong>نرخ‌های تورم:</strong> از ساید‌بار (منوی سمت راست) قابل ویرایش هستند.
-    دقت نرخ تورم مستقیماً بر دقت تحلیل تأثیر دارد.
-    </div>""", unsafe_allow_html=True)
-
-# ── TAB DA: DIRHAM-DOLLAR SIGNAL ──────
-with tab_da:
-    st.markdown('<div class="rtl"><h2>📡 سیگنال خرید/فروش دلار (روش درهم)</h2></div>', unsafe_allow_html=True)
+    st.markdown('<div class="rtl"><h2>💵 تحلیل دلار</h2></div>', unsafe_allow_html=True)
     st.markdown(f"""<div class="hint">
         <strong>اصل کلیدی:</strong> درهم امارات با نرخ ثابت <strong>{AED_USD_PEG}</strong> به دلار آمریکا پگ شده.
         بنابراین اگر نرخ درهم در بازار آزاد ایران را بدانیم، ارزش واقعی لحظه‌ای دلار محاسبه می‌شود.<br>
@@ -1168,115 +816,106 @@ with tab_da:
     # ── Method Comparison ──
     st.markdown('<div class="rtl"><h3>🔄 مقایسه روش‌ها</h3></div>', unsafe_allow_html=True)
     st.markdown("""<div class="hint" style="font-size:12px">
-        مقایسه سه روش مستقل تحلیل ارزش دلار. اگر دو یا سه روش سیگنال یکسان بدهند، اعتبار بالاتر.
+        مقایسه دو روش مستقل تحلیل ارزش دلار. اگر هر دو روش سیگنال یکسان بدهند، اعتبار بالاتر.
     </div>""", unsafe_allow_html=True)
 
-    _inf_diff = ((dollar - _dv_current) / _dv_current * 100) if _dv_current > 0 else 0
-    mmc = st.columns(4)
+    mmc = st.columns(3)
     with mmc[0]:
         render_m("📡 روش درهم (لحظه‌ای)", f"{fmt(_usd_from_aed_sell)} T",
                  f"اختلاف: {_aed_diff_pct:+.1f}%")
     with mmc[1]:
-        render_m("📈 روش تورم (بلندمدت)", f"{fmt(_dv_current)} T",
-                 f"اختلاف: {_inf_diff:+.1f}%")
-    with mmc[2]:
         render_m("🌍 اجماع چند ارزی", f"{fmt(_consensus_usd)} T",
                  f"اختلاف: {_cons_diff_pct:+.1f}%" if _consensus_usd > 0 else "—")
-    with mmc[3]:
+    with mmc[2]:
         render_m("💵 قیمت بازار آزاد", f"{fmt(dollar)} T", "bonbast.com")
 
     # Combined multi-method recommendation
     # ═══ Tier 1: Strong individual signals (strict thresholds) ═══
     _m_buy_strong = sum([
         _aed_diff_pct < -1.0,
-        _inf_diff < -3,
         _cons_diff_pct < -1.0 if _consensus_usd > 0 else False
     ])
     _m_sell_strong = sum([
         _aed_diff_pct > 1.0,
-        _inf_diff > 3,
         _cons_diff_pct > 1.0 if _consensus_usd > 0 else False
     ])
-    _m_total = 3 if _consensus_usd > 0 else 2
+    _m_total = 2 if _consensus_usd > 0 else 1
 
-    # ═══ Tier 2: Directional consensus (ALL methods agree on direction) ═══
+    # ═══ Tier 2: Directional consensus (both methods agree on direction) ═══
     _all_below = all([
         _aed_diff_pct < -0.2,
-        _inf_diff < 0,
         (_cons_diff_pct < -0.2 if _consensus_usd > 0 else True)
     ])
     _all_above = all([
         _aed_diff_pct > 0.2,
-        _inf_diff > 0,
         (_cons_diff_pct > 0.2 if _consensus_usd > 0 else True)
     ])
-    _avg_dev = (_aed_diff_pct + _inf_diff + (_cons_diff_pct if _consensus_usd > 0 else 0)) / _m_total
+    _avg_dev = (_aed_diff_pct + (_cons_diff_pct if _consensus_usd > 0 else 0)) / _m_total
 
     # ═══ Status labels for each method ═══
     _aed_lbl = f"درهم: {_aed_diff_pct:+.1f}% {'✅' if _aed_diff_pct < -0.3 else ('⚠️' if _aed_diff_pct > 0.3 else '➖')}"
-    _inf_lbl = f"تورم: {_inf_diff:+.1f}% {'✅' if _inf_diff < -0.3 else ('⚠️' if _inf_diff > 0.3 else '➖')}"
     _cons_lbl = f"اجماع: {_cons_diff_pct:+.1f}% {'✅' if _cons_diff_pct < -0.3 else ('⚠️' if _cons_diff_pct > 0.3 else '➖')}"
 
     if _m_buy_strong >= 2:
-        render_sig("b", "خرید قوی — تأیید چند روشه",
-                   f"{_m_buy_strong} از {_m_total} روش سیگنال خرید قوی می‌دهند (میانگین: {_avg_dev:+.1f}%)",
+        render_sig("b", "خرید قوی — تأیید هر دو روش",
+                   f"هر دو روش سیگنال خرید قوی می‌دهند (میانگین: {_avg_dev:+.1f}%)",
                    ["خرید پله‌ای دلار — اعتبار بسیار بالا",
-                    _aed_lbl, _inf_lbl, _cons_lbl],
+                    _aed_lbl, _cons_lbl],
                    "🔀 ترکیبی")
     elif _m_sell_strong >= 2:
-        render_sig("s", "فروش قوی — تأیید چند روشه",
-                   f"{_m_sell_strong} از {_m_total} روش سیگنال فروش قوی می‌دهند (میانگین: {_avg_dev:+.1f}%)",
+        render_sig("s", "فروش قوی — تأیید هر دو روش",
+                   f"هر دو روش سیگنال فروش قوی می‌دهند (میانگین: {_avg_dev:+.1f}%)",
                    ["فروش بخشی از دلار — اعتبار بسیار بالا",
-                    _aed_lbl, _inf_lbl, _cons_lbl],
+                    _aed_lbl, _cons_lbl],
                    "🔀 ترکیبی")
     elif _all_below and _avg_dev < -0.5:
         render_sig("b",
-                   f"خرید — همه روش‌ها دلار را زیر ارزش نشان می‌دهند",
-                   f"هر سه روش تحلیلی جهت خرید دارند (میانگین اختلاف: {_avg_dev:+.1f}%)",
-                   ["اجماع جهتی: تمام روش‌ها قیمت بازار را زیر ارزش واقعی می‌دانند",
+                   f"خرید — هر دو روش دلار را زیر ارزش نشان می‌دهند",
+                   f"هر دو روش تحلیلی جهت خرید دارند (میانگین اختلاف: {_avg_dev:+.1f}%)",
+                   ["اجماع جهتی: هر دو روش قیمت بازار را زیر ارزش واقعی می‌دانند",
                     "خرید پله‌ای توصیه می‌شود",
-                    _aed_lbl, _inf_lbl, _cons_lbl],
+                    _aed_lbl, _cons_lbl],
                    "🔀 ترکیبی")
     elif _all_above and _avg_dev > 0.5:
         render_sig("s",
-                   f"فروش — همه روش‌ها دلار را بالای ارزش نشان می‌دهند",
-                   f"هر سه روش تحلیلی جهت فروش دارند (میانگین اختلاف: {_avg_dev:+.1f}%)",
-                   ["اجماع جهتی: تمام روش‌ها قیمت بازار را بالای ارزش واقعی می‌دانند",
+                   f"فروش — هر دو روش دلار را بالای ارزش نشان می‌دهند",
+                   f"هر دو روش تحلیلی جهت فروش دارند (میانگین اختلاف: {_avg_dev:+.1f}%)",
+                   ["اجماع جهتی: هر دو روش قیمت بازار را بالای ارزش واقعی می‌دانند",
                     "فروش بخشی از دلار توصیه می‌شود",
-                    _aed_lbl, _inf_lbl, _cons_lbl],
+                    _aed_lbl, _cons_lbl],
                    "🔀 ترکیبی")
     elif _all_below:
         render_sig("b",
                    f"تمایل به خرید — جهت روش‌ها هم‌سو",
-                   f"هر سه روش دلار را زیر ارزش نشان می‌دهند (میانگین: {_avg_dev:+.1f}%) ولی فاصله کم",
+                   f"هر دو روش دلار را زیر ارزش نشان می‌دهند (میانگین: {_avg_dev:+.1f}%) ولی فاصله کم",
                    ["جهت مثبت ولی اختلاف جزئی — خرید با احتیاط",
-                    _aed_lbl, _inf_lbl, _cons_lbl],
+                    _aed_lbl, _cons_lbl],
                    "🔀 ترکیبی")
     elif _all_above:
         render_sig("w",
                    f"تمایل به فروش — جهت روش‌ها هم‌سو",
-                   f"هر سه روش دلار را بالای ارزش نشان می‌دهند (میانگین: {_avg_dev:+.1f}%) ولی فاصله کم",
+                   f"هر دو روش دلار را بالای ارزش نشان می‌دهند (میانگین: {_avg_dev:+.1f}%) ولی فاصله کم",
                    ["جهت منفی — از خرید خودداری کنید",
-                    _aed_lbl, _inf_lbl, _cons_lbl],
+                    _aed_lbl, _cons_lbl],
                    "🔀 ترکیبی")
     elif _m_buy_strong >= 1 and _avg_dev < -0.3:
         render_sig("b",
                    f"تمایل به خرید — حداقل یک روش سیگنال قوی دارد",
                    f"میانگین اختلاف {_avg_dev:+.1f}% — دلار کمی زیر ارزش",
-                   [_aed_lbl, _inf_lbl, _cons_lbl,
+                   [_aed_lbl, _cons_lbl,
                     "خرید با احتیاط — پله‌ای"],
                    "🔀 ترکیبی")
     elif _m_sell_strong >= 1 and _avg_dev > 0.3:
         render_sig("w",
                    f"تمایل به فروش — حداقل یک روش سیگنال قوی دارد",
                    f"میانگین اختلاف {_avg_dev:+.1f}% — دلار کمی بالای ارزش",
-                   [_aed_lbl, _inf_lbl, _cons_lbl,
+                   [_aed_lbl, _cons_lbl,
                     "از خرید خودداری کنید"],
                    "🔀 ترکیبی")
     else:
         render_sig("w", "خنثی — بازار متعادل",
                    f"میانگین اختلاف {_avg_dev:+.1f}% — سیگنال مشخصی وجود ندارد",
-                   [_aed_lbl, _inf_lbl, _cons_lbl,
+                   [_aed_lbl, _cons_lbl,
                     "رصد روزانه تا فرصت مشخص شود"],
                    "🔀 ترکیبی")
 
@@ -1308,10 +947,9 @@ with tab_da:
             ۲. ≈ ۸۵% مبادلات ارزی ایران از طریق امارات (دوبی) انجام می‌شود<br>
             ۳. درهم نقدشونده‌ترین ارز پس از دلار در بازار ایران<br>
             ۴. صرافی‌ها معمولاً درهم را با اسپرد کمتری معامله می‌کنند<br><br>
-            <strong>تفاوت با روش تورمی:</strong><br>
-            • روش درهم <strong>لحظه‌ای</strong> و <strong>کوتاه‌مدت</strong> — بر اساس عرضه/تقاضای فعلی<br>
-            • روش تورمی <strong>بنیادی</strong> و <strong>بلندمدت</strong> — بر اساس ارزش واقعی ذاتی<br>
-            • بهترین تحلیل: ترکیب هر دو روش (تب «مقایسه روش‌ها» بالا)<br><br>
+            <strong>اجماع چند ارزی (تقویت سیگنال):</strong><br>
+            • ارزش دلار از مسیر ۷ ارز مختلف محاسبه و مقایسه می‌شود<br>
+            • اگر درهم و اجماع هر دو جهت خرید یا فروش نشان دهند، اعتبار سیگنال بالاتر است<br><br>
             <strong>محدودیت‌ها:</strong><br>
             • در شرایط تحریم شدید، پگ در بازار ایران ممکن است کاملاً حفظ نشود<br>
             • هزینه حواله و کارمزد صرافی در محاسبات لحاظ نشده<br>
@@ -1327,7 +965,7 @@ with tab_da:
 
     st.markdown("""<div class="disc">
     ⚠️ <strong>توجه:</strong> این تحلیل بر اساس نرخ لحظه‌ای بازار آزاد و پگ ثابت درهم-دلار است.
-    برای تحلیل بنیادی بلندمدت، تب «تحلیل دلار» (روش تورمی) را مشاهده کنید.
+    سیگنال‌ها ابزار کمکی هستند — تصمیم نهایی بر عهده شماست.
     </div>""", unsafe_allow_html=True)
 
 # ── TAB 4: CALCULATORS ───────────────
