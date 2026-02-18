@@ -7,6 +7,7 @@ Live Data from Bonbast + GoldPrice + ECB Frankfurter
 import streamlit as st
 import pandas as pd
 import requests
+import hashlib
 from datetime import datetime, timedelta
 
 # ================================================================
@@ -14,6 +15,71 @@ from datetime import datetime, timedelta
 # ================================================================
 st.set_page_config(page_title="مشاور مالی | طلا و ارز", page_icon="🪙",
                    layout="wide", initial_sidebar_state="expanded")
+
+# ================================================================
+# AUTHENTICATION
+# ================================================================
+USERS = {
+    "mahdi": {
+        "password_hash": hashlib.sha256("Mahdi@Fin2026!".encode()).hexdigest(),
+        "uid": "USR-MHD-8A3F7E",
+        "display_name": "مهدی",
+        "role": "admin",
+    },
+    "guest": {
+        "password_hash": hashlib.sha256("Guest@View2026!".encode()).hexdigest(),
+        "uid": "USR-GST-4B9C2D",
+        "display_name": "مهمان",
+        "role": "guest",
+    },
+}
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.current_user = None
+
+def _login_page():
+    st.markdown("""<style>
+    .login-box{max-width:420px;margin:80px auto;padding:40px;background:#112240;
+    border:1px solid #233554;border-radius:20px;direction:rtl;text-align:center;
+    box-shadow:0 8px 32px rgba(0,0,0,.4)}
+    .login-box h1{color:#64ffda;font-size:28px;margin-bottom:6px}
+    .login-box p{color:#8892b0;font-size:14px;margin-bottom:24px}
+    .login-footer{text-align:center;color:#8892b0;font-size:11px;margin-top:18px;direction:rtl}
+    </style>""", unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""<div class="login-box">
+        <h1>🪙 مشاور مالی</h1>
+        <p>برای دسترسی به داشبورد وارد شوید</p>
+        </div>""", unsafe_allow_html=True)
+
+        with st.form("login_form"):
+            username = st.text_input("نام کاربری", placeholder="mahdi / guest")
+            password = st.text_input("رمز عبور", type="password", placeholder="رمز عبور را وارد کنید")
+            submitted = st.form_submit_button("ورود", use_container_width=True)
+
+            if submitted:
+                user = USERS.get(username.lower().strip())
+                if user and hashlib.sha256(password.encode()).hexdigest() == user["password_hash"]:
+                    st.session_state.authenticated = True
+                    st.session_state.current_user = {
+                        "username": username.lower().strip(),
+                        "uid": user["uid"],
+                        "display_name": user["display_name"],
+                        "role": user["role"],
+                    }
+                    st.rerun()
+                else:
+                    st.error("نام کاربری یا رمز عبور اشتباه است!")
+
+        st.markdown('<div class="login-footer">فقط کاربران مجاز می‌توانند وارد شوند</div>',
+                    unsafe_allow_html=True)
+
+if not st.session_state.authenticated:
+    _login_page()
+    st.stop()
 
 # ================================================================
 # CSS
@@ -429,6 +495,16 @@ def dirham_dollar_signal(market_usd, aed_derived_usd, consensus_usd, n_currencie
 # SIDEBAR
 # ================================================================
 with st.sidebar:
+    _u = st.session_state.current_user
+    st.markdown(f'<div class="rtl" style="text-align:center;margin-bottom:12px;">'
+                f'<span style="color:#64ffda;font-weight:700;">{_u["display_name"]}</span>'
+                f' <span style="color:#8892b0;font-size:11px;">({_u["uid"]})</span></div>',
+                unsafe_allow_html=True)
+    if st.button("🚪 خروج", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.current_user = None
+        st.rerun()
+    st.markdown("---")
     st.markdown('<div class="rtl"><h2>📊 داده‌های زنده بازار</h2></div>', unsafe_allow_html=True)
     with st.expander("🔗 وضعیت API", expanded=False):
         st.markdown(f"{'✅' if bb['ok'] else '❌'} **Bonbast.com** — ارز، سکه، طلا")
