@@ -1178,7 +1178,7 @@ with tab6:
 
         rows = [{"دارایی": n, "ارزش": fmt(v) + " T", "سهم": f"{v/total*100:.1f}%"}
                 for n, v in vals if v > 0]
-        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         # ══════════════════════════════════════════════
         # SMART ADVISOR ENGINE v2 — cross-asset signals
@@ -1380,7 +1380,7 @@ with tab6:
                 elif pusd >= 200 and prev / dollar < 200: ms = "🎯 تنوع‌بخشی"
                 rows.append({"ماه": m, "ارزش": fmt(proj)+" T", "≈$": f"${pusd:,.0f}",
                              "≈طلا": f"{proj/g18:.1f}g", "عطف": ms})
-            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
         st.info("دارایی‌هایتان را وارد کنید تا تحلیل نمایش داده شود.")
 
@@ -1508,7 +1508,7 @@ with tab7:
                 f"≈{unit_name}": f"{units_per:.4f}",
                 "وضعیت": "⏳ آینده" if i > 0 else "📌 اولین خرید",
             })
-        st.dataframe(pd.DataFrame(plan_rows), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(plan_rows), use_container_width=True, hide_index=True)
 
         st.markdown(f"""<div class="hint">
             <strong>خلاصه:</strong> با {fmt(total_budget)} T در {int(n_steps)} مرحله ({interval})
